@@ -1,8 +1,8 @@
-// DREAMFOREN v109 - Supabase Auth login/signup gate (2026-09-01)
+// DREAMFOREN v109.2 - online config priority hotfix (2026-09-01)
 const DF_SUPABASE_CONFIG_KEY='dreampoen_supabase_config_v1';let dfSupabase=null,dfCloudUser=null,dfCloudProfile=null;
-function dfCfg(){try{const e=window.DREAMFOREN_CONFIG;if(e&&dfValid({url:e.supabaseUrl,key:e.supabasePublishableKey}))return {url:String(e.supabaseUrl).trim().replace(/\/$/,''),key:String(e.supabasePublishableKey).trim()};return JSON.parse(localStorage.getItem(DF_SUPABASE_CONFIG_KEY)||'null')}catch(e){return null}}
+function dfCfg(){try{const e=window.DREAMFOREN_CONFIG||{};const url=String(e.supabaseUrl||'').trim().replace(/\/$/,'');const key=String(e.supabasePublishableKey||'').trim();const hasOnline=url&&key&&!/^PASTE_/i.test(url)&&!/^PASTE_/i.test(key);if(hasOnline)return {url,key};const saved=JSON.parse(localStorage.getItem(DF_SUPABASE_CONFIG_KEY)||'null');return saved&&saved.url&&saved.key?saved:null}catch(e){return null}}
 function dfMsg(id,m,t=''){const e=document.getElementById(id);if(e){e.textContent=m||'';e.className='df-cloud-message'+(t?' '+t:'')}}
-function dfValid(c){return !!(c&&/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test((c.url||'').trim())&&/^sb_publishable_/i.test((c.key||'').trim()))}
+function dfValid(c){if(!c)return false;const url=String(c.url||'').trim(),key=String(c.key||'').trim();return /^https:\/\//i.test(url)&&url.length>12&&key.length>20&&!/^PASTE_/i.test(key)}
 function dfClient(c){if(!window.supabase?.createClient)throw Error('Supabase 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하세요.');return window.supabase.createClient(c.url.trim().replace(/\/$/,''),c.key.trim(),{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}})}
 function dfLockApp(){document.body.classList.add('df-auth-locked')}
 function dfUnlockApp(){document.body.classList.remove('df-auth-locked')}
