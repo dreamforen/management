@@ -3749,9 +3749,19 @@ async function dfV95SyncSchedule(s){
     const row=dfV95ScheduleRow(s,companyId);
     let onlineId=s.OnlineId||'';
     if(!onlineId){
-      const find=await dfSupabase.from('schedules').select('id,schedule_date,schedule_type,employee,detail,extra_data').eq('schedule_date',s.Date).limit(500);
-      if(find.error)throw find.error;
-      const hit=(find.data||[]).find(x=>dfV1102ScheduleSameLogicalRow(x,s));
+      // v110.3: 과거에 넣어둔 일정은 legacy_id가 없거나 달라질 수 있다.
+      // 날짜 + company_id를 먼저 사용해 실제 온라인 행을 찾고, 여러 건이면 담당자/유형/상세로 좁힌다.
+      let find=dfSupabase.from('schedules').select('id,schedule_date,schedule_type,employee,detail,extra_data,company_id').eq('schedule_date',s.Date).limit(500);
+      if(companyId)find=find.eq('company_id',companyId);
+      const fq=await find;
+      if(fq.error)throw fq.error;
+      const rows=fq.data||[];
+      let hit=rows.find(x=>dfV1102ScheduleSameLogicalRow(x,s));
+      if(!hit&&rows.length===1)hit=rows[0];
+      if(!hit){
+        const sameEmpType=rows.filter(x=>String(x.employee||'').trim()===String(s.Employee||'').trim() && String(x.schedule_type||'').trim()===String(s.Type||'').trim());
+        if(sameEmpType.length===1)hit=sameEmpType[0];
+      }
       onlineId=hit?.id||'';
     }
     if(onlineId){
@@ -3799,6 +3809,16 @@ async function scheduleCompleteSelected(flag){
   dfV89LiveRefreshSchedule(s);companyRender();
   const state=document.getElementById('companyOnlineState');
   if(state){state.textContent=syncOk?(flag?'측정완료 저장됨':'완료취소 저장됨'):'일정 온라인 저장 실패 · Supabase 권한 확인';state.className=syncOk?'company-online-state ok':'company-online-state warn';}
+  if(syncOk){
+    // 현재 날짜/선택을 유지한 채 서버값을 다시 읽어 중복·구버전 표시를 즉시 정리한다.
+    await dfV1101RefreshSchedulesOnline(false);
+    scheduleState.selectedDate=keepDate;
+    const sameOnline=(companyState.db?.Schedules||[]).find(x=>String(x.OnlineId||'')===String(s.OnlineId||''));
+    scheduleState.selectedId=String(sameOnline?.Id||keepId);
+    scheduleRenderAll();
+  }else{
+    alert('측정완료를 온라인 DB에 저장하지 못했습니다. 이 일정은 기존 이관 데이터일 수 있습니다.');
+  }
   return syncOk;
 }
 async function scheduleDeleteSelected(){
