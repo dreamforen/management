@@ -1,4 +1,4 @@
-// DREAMFOREN v110.2 - schedule completion persistence hotfix (2026-09-01)
+// DREAMFOREN v110.4 - force complete 2026-08-31 schedules (2026-09-01)
 const DF_SUPABASE_CONFIG_KEY='dreampoen_supabase_config_v1';let dfSupabase=null,dfCloudUser=null,dfCloudProfile=null;
 function dfCfg(){try{const e=window.DREAMFOREN_CONFIG||{};const url=String(e.supabaseUrl||'').trim().replace(/\/$/,'');const key=String(e.supabasePublishableKey||'').trim();const hasOnline=url&&key&&!/^PASTE_/i.test(url)&&!/^PASTE_/i.test(key);if(hasOnline)return {url,key};const saved=JSON.parse(localStorage.getItem(DF_SUPABASE_CONFIG_KEY)||'null');return saved&&saved.url&&saved.key?saved:null}catch(e){return null}}
 function dfMsg(id,m,t=''){const e=document.getElementById(id);if(e){e.textContent=m||'';e.className='df-cloud-message'+(t?' '+t:'')}}
@@ -23,7 +23,7 @@ async function dfLoadActiveProfile(user){
 }
 async function dfCompleteLogin(user){
   const profile=await dfLoadActiveProfile(user);
-  dfCloudProfile=profile;dfCloudUser=user;dfApplyRoleAccess(profile);dfStatus('온라인 연결됨 · '+user.email,'online');dfShowSession();dfHide();
+  dfCloudProfile=profile;dfCloudUser=user;dfApplyRoleAccess(profile);dfStatus('온라인 연결됨 · '+user.email,'online');dfShowSession();dfHide();setTimeout(()=>{try{dfV1104ForceAug31Complete()}catch(e){console.warn('8/31 강제완료 실행 오류',e)}},250);
   // v110.1: 새 접속은 역할별 기본화면, 새로고침은 직전 화면 유지.
   setTimeout(()=>window.dfV1101OpenRoleHome?.(false),0);
 }
@@ -3844,6 +3844,52 @@ function scheduleGoAdd(){
   window.v62ShowOnly?.('schedule-add');
 }
 let dfV1101ScheduleRefreshing=false;
+let dfV1104Aug31ForceRunning=false;
+async function dfV1104ForceAug31Complete(){
+  if(dfV1104Aug31ForceRunning||!dfSupabase||!dfCloudUser)return false;
+  dfV1104Aug31ForceRunning=true;
+  try{
+    const q=await dfSupabase.from('schedules')
+      .select('id,schedule_date,status,completed,extra_data')
+      .eq('schedule_date','2026-08-31');
+    if(q.error)throw q.error;
+    const now=new Date().toISOString().slice(0,19);
+    for(const r of (q.data||[])){
+      const ex={...(r.extra_data||{})};
+      ex.confirmed=true;
+      ex.confirmed_at=ex.confirmed_at||now.replace('T',' ');
+      ex.completed_at=ex.completed_at||now.replace('T',' ');
+      ex.updated_at=now;
+      ex.updated_by='웹 · 2026-08-31 강제완료';
+      const u=await dfSupabase.from('schedules')
+        .update({completed:true,status:'completed',extra_data:ex})
+        .eq('id',r.id);
+      if(u.error)throw u.error;
+    }
+    // 로컬/화면에도 8월 31일 일정은 즉시 완료로 고정
+    const list=companyState?.db?.Schedules||[];
+    list.forEach(s=>{
+      if(String(s.Date||'')==='2026-08-31'){
+        s.Confirmed=true;
+        s.Completed=true;
+        s.ConfirmedAt=s.ConfirmedAt||now.replace('T',' ');
+        s.CompletedAt=s.CompletedAt||now.replace('T',' ');
+        s.UpdatedAt=now;
+        s.UpdatedBy='웹 · 2026-08-31 강제완료';
+      }
+    });
+    try{companySaveDb()}catch(e){}
+    if(scheduleState?.year===2026&&scheduleState?.month===8){
+      await dfV1101RefreshSchedulesOnline(false);
+    }
+    return true;
+  }catch(e){
+    console.warn('2026-08-31 일정 강제완료 실패',e);
+    return false;
+  }finally{
+    dfV1104Aug31ForceRunning=false;
+  }
+}
 async function dfV1101RefreshSchedulesOnline(showFeedback=false){
   if(dfV1101ScheduleRefreshing)return;
   if(!dfSupabase||!dfCloudUser||!companyState?.db){scheduleRenderAll();return}
@@ -3861,7 +3907,7 @@ async function dfV1101RefreshSchedulesOnline(showFeedback=false){
       let s=companyState.db.Schedules.find(x=>String(x.OnlineId||'')===String(r.id));
       if(!s&&legacy)s=companyState.db.Schedules.find(x=>String(x.Id||'')===legacy);
       if(!s){s={Id:legacy||`schedule-online-${r.id}`,CreatedAt:ex.created_at||'',Deleted:false};companyState.db.Schedules.push(s)}
-      Object.assign(s,{OnlineId:r.id,Date:r.schedule_date||'',Employee:r.employee||'',Team:r.team||'',Type:r.schedule_type||'',Company:ex.company||'',Companies:Array.isArray(ex.companies)?ex.companies:(ex.company?[ex.company]:[]),Detail:r.detail||'',Note:r.memo||'',Confirmed:!!ex.confirmed||r.status==='confirmed'||r.status==='completed',ConfirmedAt:ex.confirmed_at||'',Completed:!!r.completed||r.status==='completed',CompletedAt:ex.completed_at||'',UpdatedAt:ex.updated_at||'',UpdatedBy:ex.updated_by||'',Deleted:!!ex.deleted});
+      Object.assign(s,{OnlineId:r.id,Date:r.schedule_date||'',Employee:r.employee||'',Team:r.team||'',Type:r.schedule_type||'',Company:ex.company||'',Companies:Array.isArray(ex.companies)?ex.companies:(ex.company?[ex.company]:[]),Detail:r.detail||'',Note:r.memo||'',Confirmed:(r.schedule_date==='2026-08-31')||!!ex.confirmed||r.status==='confirmed'||r.status==='completed',ConfirmedAt:ex.confirmed_at||'',Completed:(r.schedule_date==='2026-08-31')||!!r.completed||r.status==='completed',CompletedAt:ex.completed_at||((r.schedule_date==='2026-08-31')?'2026-08-31 23:59:59':''),UpdatedAt:ex.updated_at||'',UpdatedBy:ex.updated_by||'',Deleted:!!ex.deleted});
     }
     try{companySaveDb()}catch(e){}
     scheduleState.selectedDate=keepDate;
