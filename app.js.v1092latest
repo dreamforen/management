@@ -15,7 +15,7 @@ function dfStatus(t,s=''){const b=document.getElementById('dfCloudStatus'),x=doc
 function dfShowSession(){const box=document.getElementById('dfUserSession'),name=document.getElementById('dfUserSessionName');if(box)box.hidden=false;if(name)name.textContent=dfCloudProfile?.name||dfCloudUser?.email||'사용자'}
 function dfHideSession(){const box=document.getElementById('dfUserSession');if(box)box.hidden=true}
 async function dfLoadActiveProfile(user){
-  const p=await dfSupabase.from('profiles').select('id,name,email,role,team,active').eq('id',user.id).maybeSingle();
+  const p=await dfSupabase.from('profiles').select('id,name,role,active').eq('id',user.id).maybeSingle();
   if(p.error)throw p.error;
   if(!p.data)throw Error('회원 프로필이 아직 생성되지 않았습니다. 관리자에게 문의하세요.');
   if(!p.data.active)throw Error('관리자 승인 대기 중인 계정입니다.');
@@ -63,7 +63,6 @@ document.addEventListener('DOMContentLoaded',()=>{
     schedule:'dfViewSchedule',
     'schedule-add':'dfViewScheduleAdd',
     navigation:'dfViewNavigation',
-    employees:'dfViewEmployees',
     analysis:'dfViewAnalysis',
     sample:'dfViewSample'
   };
@@ -116,7 +115,6 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(viewName==='company'){setTimeout(async()=>{if(companyState?.db){try{await dfV73BuildCompanyStatusFromContracts();companyRender()}catch(e){console.warn('업체현황 진입 갱신',e)}}},80)};
     if(viewName==='schedule-add' && typeof scheduleAddPrepare==='function')scheduleAddPrepare();
     if(viewName==='navigation' && typeof dfV70RefreshCompaniesOnline==='function')dfV70RefreshCompaniesOnline(false);
-    if(viewName==='employees' && typeof dfEmployeesLoad==='function')dfEmployeesLoad();
     if(viewName==='analysis' && typeof refreshAnalysisRecordList==='function'){
       refreshAnalysisRecordList();
       if(typeof v66ReloadSelectedAnalysis==='function')v66ReloadSelectedAnalysis();
@@ -4166,7 +4164,6 @@ document.addEventListener('DOMContentLoaded',initScheduleAdd);
     company:document.getElementById('dfViewCompany'),
     schedule:document.getElementById('dfViewSchedule'),
     'schedule-add':document.getElementById('dfViewScheduleAdd'),
-    employees:document.getElementById('dfViewEmployees'),
     sample:document.getElementById('dfViewSample')
   };
   function showView(name){
@@ -4178,7 +4175,6 @@ document.addEventListener('DOMContentLoaded',initScheduleAdd);
   navItems.forEach(btn=>btn.addEventListener('click',()=>{
     showView(btn.dataset.view);
     if(btn.dataset.view==='schedule')scheduleRenderAll();
-    if(btn.dataset.view==='employees')dfEmployeesLoad();
     if(btn.dataset.view==='schedule-add'){
       scheduleAddFillCompanies();
       const draft=localStorage.getItem('dreampoen_schedule_draft_date');if(draft)$('#scheduleAddDate').value=draft;
@@ -4991,29 +4987,13 @@ async function dfV68LoadCurrentContractCompanies(){
 
 function dfApplyRoleAccess(profile){
   const admin=String(profile?.role||'').toLowerCase()==='admin';
-  const nav=document.getElementById('dfContractNav');if(nav)nav.hidden=!admin;const empNav=document.getElementById('dfEmployeesNav');if(empNav)empNav.hidden=!admin;if(admin)setTimeout(()=>dfEmployeesUpdatePendingBadge(),250);
+  const nav=document.getElementById('dfContractNav');if(nav)nav.hidden=!admin;
   let badge=document.getElementById('dfRoleBadge');
   if(!badge){badge=document.createElement('div');badge.id='dfRoleBadge';badge.className='df-role-badge';document.querySelector('.df-side-nav')?.before(badge)}
   if(badge)badge.textContent=admin?'관리자 계정 · 전체 권한':`${profile?.name||'직원'} · 업무 화면`;
   if(!admin && document.querySelector('.df-nav-item[data-view="contract"].active'))window.v62ShowOnly?.('company');
   dfV68OnlineBootstrap();dfV68RefreshCurrentContractCompaniesOnline();
 }
-
-// ==========================================================
-// v110 관리자 직원관리 - 승인 / 권한 / 소속 관리
-// ==========================================================
-function dfEmployeeEsc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function dfEmployeesMsg(text,type=''){const e=document.getElementById('dfEmployeesMessage');if(!e)return;e.textContent=text||'';e.className='df-employees-message'+(type?' '+type:'')}
-function dfEmployeeTeamOptions(value){const opts=['','관리','사무실','1팀','2팀','LAB'];return opts.map(v=>`<option value="${dfEmployeeEsc(v)}" ${String(value||'')===v?'selected':''}>${v||'미지정'}</option>`).join('')}
-function dfEmployeeRoleOptions(value){return [['staff','직원'],['admin','관리자']].map(([v,l])=>`<option value="${v}" ${String(value||'staff')===v?'selected':''}>${l}</option>`).join('')}
-async function dfEmployeesFetch(){if(!dfSupabase)throw Error('온라인 DB에 연결되어 있지 않습니다.');if(!dfV68IsAdmin())throw Error('관리자만 직원관리를 사용할 수 있습니다.');const {data,error}=await dfSupabase.from('profiles').select('id,name,email,role,team,active').order('active',{ascending:true}).order('name',{ascending:true});if(error)throw error;return data||[]}
-function dfEmployeesRender(rows){const list=document.getElementById('dfEmployeesList');if(!list)return;const pending=rows.filter(r=>!r.active).length,active=rows.filter(r=>!!r.active).length;document.getElementById('dfEmployeesTotal').textContent=rows.length;document.getElementById('dfEmployeesPending').textContent=pending;document.getElementById('dfEmployeesActive').textContent=active;const badge=document.getElementById('dfEmployeePendingBadge');if(badge){badge.textContent=pending;badge.hidden=!pending}if(!rows.length){list.innerHTML='<div class="df-employees-empty">등록된 직원이 없습니다.</div>';return}list.innerHTML=rows.map(r=>{const self=r.id===dfCloudUser?.id;const status=r.active?'사용중':'승인대기';return `<div class="df-employee-card ${r.active?'active':'pending'}" data-employee-id="${dfEmployeeEsc(r.id)}"><div class="df-employee-person"><strong>${dfEmployeeEsc(r.name||'이름 없음')}</strong><small>${dfEmployeeEsc(r.email||r.id)}</small><span class="status">${status}${self?' · 내 계정':''}</span></div><div class="df-employee-field"><label>권한</label><select data-emp-role ${self?'disabled':''}>${dfEmployeeRoleOptions(r.role)}</select></div><div class="df-employee-field"><label>소속</label><select data-emp-team>${dfEmployeeTeamOptions(r.team)}</select></div><div class="df-employee-actions"><button type="button" data-emp-save>설정 저장</button>${r.active?`<button type="button" class="disable" data-emp-disable ${self?'disabled':''}>사용중지</button>`:`<button type="button" class="approve" data-emp-approve>승인</button>`}</div></div>`}).join('');list.querySelectorAll('[data-employee-id]').forEach(card=>{const id=card.dataset.employeeId;card.querySelector('[data-emp-save]')?.addEventListener('click',()=>dfEmployeesSaveCard(card,id,false));card.querySelector('[data-emp-approve]')?.addEventListener('click',()=>dfEmployeesSaveCard(card,id,true));card.querySelector('[data-emp-disable]')?.addEventListener('click',()=>dfEmployeesDisable(id));})}
-async function dfEmployeesLoad(){if(!dfV68IsAdmin())return;try{dfEmployeesMsg('직원 정보를 불러오는 중입니다.');const rows=await dfEmployeesFetch();dfEmployeesRender(rows);dfEmployeesMsg('')}catch(e){dfEmployeesMsg('직원 정보를 불러오지 못했습니다: '+e.message,'bad')}}
-async function dfEmployeesSaveCard(card,id,approve){try{const role=card.querySelector('[data-emp-role]')?.value||'staff',team=card.querySelector('[data-emp-team]')?.value||null;if(id===dfCloudUser?.id&&role!=='admin')throw Error('현재 로그인한 관리자 계정의 관리자 권한은 해제할 수 없습니다.');dfEmployeesMsg(approve?'승인 처리 중...':'설정 저장 중...');const payload={role,team};if(approve)payload.active=true;const {error}=await dfSupabase.from('profiles').update(payload).eq('id',id);if(error)throw error;dfEmployeesMsg(approve?'승인되었습니다.':'설정을 저장했습니다.','ok');await dfEmployeesLoad()}catch(e){dfEmployeesMsg('처리 실패: '+e.message,'bad')}}
-async function dfEmployeesDisable(id){if(id===dfCloudUser?.id){dfEmployeesMsg('현재 로그인한 관리자 본인 계정은 사용중지할 수 없습니다.','bad');return}if(!confirm('이 직원의 시스템 사용을 중지할까요?'))return;try{dfEmployeesMsg('사용중지 처리 중...');const {error}=await dfSupabase.from('profiles').update({active:false}).eq('id',id);if(error)throw error;dfEmployeesMsg('사용중지되었습니다.','ok');await dfEmployeesLoad()}catch(e){dfEmployeesMsg('사용중지 실패: '+e.message,'bad')}}
-async function dfEmployeesUpdatePendingBadge(){if(!dfSupabase||!dfV68IsAdmin())return;try{const {count,error}=await dfSupabase.from('profiles').select('id',{count:'exact',head:true}).eq('active',false);if(error)throw error;const b=document.getElementById('dfEmployeePendingBadge');if(b){b.textContent=count||0;b.hidden=!(count>0)}}catch(e){console.warn('직원 승인대기 확인',e)}}
-document.addEventListener('DOMContentLoaded',()=>{document.getElementById('dfEmployeesRefresh')?.addEventListener('click',dfEmployeesLoad)});
-
 function dfV68IsAdmin(){return String(dfCloudProfile?.role||'').toLowerCase()==='admin'}
 
 async function dfV68FetchAll(table,columns='*',orderCol=''){
