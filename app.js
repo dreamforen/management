@@ -1,4 +1,4 @@
-// DREAMFOREN v109.2 - online config priority hotfix (2026-09-01)
+// DREAMFOREN v110.1 - view persistence + safe schedule edit/live refresh (2026-09-01)
 const DF_SUPABASE_CONFIG_KEY='dreampoen_supabase_config_v1';let dfSupabase=null,dfCloudUser=null,dfCloudProfile=null;
 function dfCfg(){try{const e=window.DREAMFOREN_CONFIG||{};const url=String(e.supabaseUrl||'').trim().replace(/\/$/,'');const key=String(e.supabasePublishableKey||'').trim();const hasOnline=url&&key&&!/^PASTE_/i.test(url)&&!/^PASTE_/i.test(key);if(hasOnline)return {url,key};const saved=JSON.parse(localStorage.getItem(DF_SUPABASE_CONFIG_KEY)||'null');return saved&&saved.url&&saved.key?saved:null}catch(e){return null}}
 function dfMsg(id,m,t=''){const e=document.getElementById(id);if(e){e.textContent=m||'';e.className='df-cloud-message'+(t?' '+t:'')}}
@@ -24,6 +24,8 @@ async function dfLoadActiveProfile(user){
 async function dfCompleteLogin(user){
   const profile=await dfLoadActiveProfile(user);
   dfCloudProfile=profile;dfCloudUser=user;dfApplyRoleAccess(profile);dfStatus('온라인 연결됨 · '+user.email,'online');dfShowSession();dfHide();
+  // v110.1: 새 접속은 역할별 기본화면, 새로고침은 직전 화면 유지.
+  setTimeout(()=>window.dfV1101OpenRoleHome?.(false),0);
 }
 async function dfBoot(){
   dfLockApp();const c=dfCfg();
@@ -48,7 +50,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('dfLoginPassword')?.addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('dfLoginBtn')?.click()});
   document.getElementById('dfSignupBtn')?.addEventListener('click',async()=>{const name=document.getElementById('dfSignupName').value.trim(),email=document.getElementById('dfSignupEmail').value.trim(),pw=document.getElementById('dfSignupPassword').value,pw2=document.getElementById('dfSignupPassword2').value;if(!name||!email||!pw||!pw2){dfMsg('dfSignupMessage','이름, 이메일, 비밀번호를 모두 입력하세요.','bad');return}if(pw.length<6){dfMsg('dfSignupMessage','비밀번호는 6자 이상 입력하세요.','bad');return}if(pw!==pw2){dfMsg('dfSignupMessage','비밀번호 확인이 일치하지 않습니다.','bad');return}try{dfMsg('dfSignupMessage','회원가입 처리 중...');const {data,error}=await dfSupabase.auth.signUp({email,password:pw,options:{data:{name}}});if(error)throw error;if(data.session){await dfSupabase.auth.signOut()}dfMsg('dfSignupMessage','가입 신청 완료 ✓ 인증메일을 확인한 뒤 관리자 승인을 기다려주세요.','ok')}catch(e){dfMsg('dfSignupMessage','회원가입 실패: '+e.message,'bad')}});
   document.getElementById('dfForgotPassword')?.addEventListener('click',async()=>{const email=document.getElementById('dfLoginEmail').value.trim();if(!email){dfMsg('dfLoginMessage','먼저 이메일 주소를 입력한 뒤 비밀번호 찾기를 눌러주세요.','bad');return}try{const redirectTo=location.protocol==='http:'||location.protocol==='https:'?location.href.split('#')[0]:undefined;const opts=redirectTo?{redirectTo}:undefined;const {error}=await dfSupabase.auth.resetPasswordForEmail(email,opts);if(error)throw error;dfMsg('dfLoginMessage','비밀번호 재설정 메일을 보냈습니다. 이메일을 확인해주세요.','ok')}catch(e){dfMsg('dfLoginMessage','재설정 메일 전송 실패: '+e.message,'bad')}});
-  document.getElementById('dfLogoutBtn')?.addEventListener('click',async()=>{try{await dfSupabase?.auth.signOut()}finally{dfCloudUser=null;dfCloudProfile=null;dfHideSession();dfStatus('DB 연결됨 · 로그인 필요');dfLogin('로그아웃되었습니다.','ok')}});
+  document.getElementById('dfLogoutBtn')?.addEventListener('click',async()=>{try{await dfSupabase?.auth.signOut()}finally{try{sessionStorage.removeItem('dreampoen_current_view_v1101')}catch(e){}dfCloudUser=null;dfCloudProfile=null;dfHideSession();dfStatus('DB 연결됨 · 로그인 필요');dfLogin('로그아웃되었습니다.','ok')}});
   dfBoot();
 });
 
@@ -73,6 +75,10 @@ document.addEventListener('DOMContentLoaded',()=>{
   function v62ShowOnly(viewName){
     const id=VIEW_MAP[viewName];
     if(!id)return;
+
+    // v110.1: 새로고침 시 현재 화면을 유지한다.
+    // sessionStorage를 사용해 새 탭/새 로그인은 역할별 기본화면에서 시작한다.
+    if(dfCloudProfile){try{sessionStorage.setItem('dreampoen_current_view_v1101',viewName)}catch(e){}}
 
     const myToken=++routeToken;
 
@@ -114,6 +120,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 
     if(viewName==='contract' && typeof dfV68LoadContracts==='function')dfV68LoadContracts();
     if(viewName==='company'){setTimeout(async()=>{if(companyState?.db){try{await dfV73BuildCompanyStatusFromContracts();companyRender()}catch(e){console.warn('업체현황 진입 갱신',e)}}},80)};
+    if(viewName==='schedule'){setTimeout(()=>{if(typeof dfV1101RefreshSchedulesOnline==='function')dfV1101RefreshSchedulesOnline(false)},40)}
     if(viewName==='schedule-add' && typeof scheduleAddPrepare==='function')scheduleAddPrepare();
     if(viewName==='navigation' && typeof dfV70RefreshCompaniesOnline==='function')dfV70RefreshCompaniesOnline(false);
     if(viewName==='employees' && typeof dfEmployeesLoad==='function')dfEmployeesLoad();
@@ -139,9 +146,17 @@ document.addEventListener('DOMContentLoaded',()=>{
   window.v62ShowOnly=v62ShowOnly;
 
   document.addEventListener('DOMContentLoaded',()=>{
-    const active=document.querySelector('.df-nav-item[data-view].active')?.dataset.view || 'sample';
+    let remembered='';try{remembered=sessionStorage.getItem('dreampoen_current_view_v1101')||''}catch(e){}
+    const active=(remembered&&VIEW_MAP[remembered])?remembered:(document.querySelector('.df-nav-item[data-view].active')?.dataset.view || 'sample');
     v62ShowOnly(active);
   });
+
+  window.dfV1101OpenRoleHome=function(forceDefault=false){
+    let target='';
+    if(!forceDefault){try{target=sessionStorage.getItem('dreampoen_current_view_v1101')||''}catch(e){}}
+    if(!VIEW_MAP[target])target=(dfCloudProfile?.role==='admin'?'contract':'company');
+    v62ShowOnly(target);
+  };
 })();
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -3504,7 +3519,7 @@ function scheduleRenderDay(){
   tbody.innerHTML=items.map(s=>{
     const st=scheduleStatus(s);
     const companies=(s.Companies&&s.Companies.length)?s.Companies.join(' / '):(s.Company||'');
-    return `<tr data-schedule-id="${companyEsc(s.Id)}" class="${scheduleState.selectedId===s.Id?'selected':''}">
+    return `<tr data-schedule-id="${companyEsc(s.Id)}" class="${scheduleState.selectedId===s.Id?'selected':''}" title="더블클릭하면 이 일정을 수정합니다">
       <td><span class="schedule-row-status ${st.key}">${st.label}</span></td>
       <td>${companyEsc(s.Employee)}</td><td>${companyEsc(s.Type)}</td>
       <td title="${companyEsc(companies)}">${companyEsc(companies)}</td>
@@ -3512,9 +3527,9 @@ function scheduleRenderDay(){
       <td title="${companyEsc(s.Note)}">${companyEsc(String(s.Note||'').replace(/\n/g,' / '))}</td>
     </tr>`;
   }).join('')||'<tr><td colspan="6" style="text-align:center;color:#8997a3;padding:22px">등록된 일정이 없습니다.</td></tr>';
-  tbody.querySelectorAll('tr[data-schedule-id]').forEach(row=>row.onclick=()=>{
-    scheduleState.selectedId=row.dataset.scheduleId;
-    scheduleRenderDay();
+  tbody.querySelectorAll('tr[data-schedule-id]').forEach(row=>{
+    row.onclick=()=>{scheduleState.selectedId=row.dataset.scheduleId;scheduleRenderDay();};
+    row.ondblclick=()=>{scheduleState.selectedId=row.dataset.scheduleId;scheduleEditSelected();};
   });
   dfV89UpdateScheduleActionButtons();
 }
@@ -3760,24 +3775,60 @@ async function scheduleDeleteSelected(){
   companySaveDb();await dfV95SyncSchedule(s);scheduleState.selectedId=null;scheduleRenderAll();
 }
 let dfV81PendingScheduleDate='';
+let dfV1101ScheduleEditId='';
+function scheduleEditSelected(){
+  const s=scheduleSelected();if(!s){alert('수정할 일정을 먼저 선택해주세요.');return}
+  dfV1101ScheduleEditId=String(s.Id||'');
+  window.v62ShowOnly?.('schedule-add');
+}
 function scheduleGoAdd(){
+  dfV1101ScheduleEditId='';
   dfV81PendingScheduleDate=scheduleState.selectedDate;
   localStorage.setItem('dreampoen_schedule_draft_date',scheduleState.selectedDate);
   const text=document.getElementById('scheduleAddPlaceholderText');
   if(text)text.textContent=`선택 날짜: ${scheduleState.selectedDate}`;
   window.v62ShowOnly?.('schedule-add');
 }
+let dfV1101ScheduleRefreshing=false;
+async function dfV1101RefreshSchedulesOnline(showFeedback=false){
+  if(dfV1101ScheduleRefreshing)return;
+  if(!dfSupabase||!dfCloudUser||!companyState?.db){scheduleRenderAll();return}
+  dfV1101ScheduleRefreshing=true;
+  const keepDate=scheduleState.selectedDate,keepId=String(scheduleState.selectedId||'');
+  try{
+    const start=`${scheduleState.year}-${String(scheduleState.month).padStart(2,'0')}-01`;
+    const endObj=new Date(scheduleState.year,scheduleState.month,0);
+    const end=`${scheduleState.year}-${String(scheduleState.month).padStart(2,'0')}-${String(endObj.getDate()).padStart(2,'0')}`;
+    const q=await dfSupabase.from('schedules').select('id,schedule_date,status,schedule_type,employee,team,detail,memo,completed,extra_data,company_id').gte('schedule_date',start).lte('schedule_date',end).order('schedule_date',{ascending:true});
+    if(q.error)throw q.error;
+    companyState.db.Schedules=companyState.db.Schedules||[];
+    for(const r of (q.data||[])){
+      const ex=r.extra_data||{},legacy=String(ex.legacy_id||'').trim();
+      let s=companyState.db.Schedules.find(x=>String(x.OnlineId||'')===String(r.id));
+      if(!s&&legacy)s=companyState.db.Schedules.find(x=>String(x.Id||'')===legacy);
+      if(!s){s={Id:legacy||`schedule-online-${r.id}`,CreatedAt:ex.created_at||'',Deleted:false};companyState.db.Schedules.push(s)}
+      Object.assign(s,{OnlineId:r.id,Date:r.schedule_date||'',Employee:r.employee||'',Team:r.team||'',Type:r.schedule_type||'',Company:ex.company||'',Companies:Array.isArray(ex.companies)?ex.companies:(ex.company?[ex.company]:[]),Detail:r.detail||'',Note:r.memo||'',Confirmed:!!ex.confirmed||r.status==='confirmed'||r.status==='completed',ConfirmedAt:ex.confirmed_at||'',Completed:!!r.completed||r.status==='completed',CompletedAt:ex.completed_at||'',UpdatedAt:ex.updated_at||'',UpdatedBy:ex.updated_by||'',Deleted:!!ex.deleted});
+    }
+    try{companySaveDb()}catch(e){}
+    scheduleState.selectedDate=keepDate;
+    scheduleState.selectedId=keepId&&scheduleItems().some(x=>String(x.Id)===keepId)?keepId:null;
+    scheduleRenderAll();
+    if(showFeedback){const st=document.getElementById('companyOnlineState');if(st){st.textContent='일정 온라인 최신';st.className='company-online-state ok'}}
+  }catch(e){console.warn('v110.1 일정 온라인 새로고침 실패',e);scheduleRenderAll();if(showFeedback)alert('일정 온라인 새로고침에 실패했습니다. 현재 화면의 데이터는 유지됩니다.')}
+  finally{dfV1101ScheduleRefreshing=false}
+}
+
 function initScheduleManager(){
   const y=document.getElementById('scheduleYear'),m=document.getElementById('scheduleMonth');if(!y||!m)return;
   const now=new Date();scheduleState.year=now.getFullYear();scheduleState.month=now.getMonth()+1;scheduleState.selectedDate=scheduleIso(now);
   for(let yy=2025;yy<=2035;yy++){const o=document.createElement('option');o.value=o.textContent=yy;y.appendChild(o)}
   for(let mm=1;mm<=12;mm++){const o=document.createElement('option');o.value=mm;o.textContent=`${mm}월`;m.appendChild(o)}
-  y.onchange=()=>{scheduleState.year=+y.value;scheduleRenderAll()};
-  m.onchange=()=>{scheduleState.month=+m.value;scheduleRenderAll()};
-  document.getElementById('schedulePrev').onclick=()=>{let d=new Date(scheduleState.year,scheduleState.month-2,1);scheduleState.year=d.getFullYear();scheduleState.month=d.getMonth()+1;scheduleRenderAll()};
-  document.getElementById('scheduleNext').onclick=()=>{let d=new Date(scheduleState.year,scheduleState.month,1);scheduleState.year=d.getFullYear();scheduleState.month=d.getMonth()+1;scheduleRenderAll()};
-  document.getElementById('scheduleToday').onclick=()=>{const d=new Date();scheduleState.year=d.getFullYear();scheduleState.month=d.getMonth()+1;scheduleState.selectedDate=scheduleIso(d);scheduleRenderAll()};
-  document.getElementById('scheduleRefresh').onclick=scheduleRenderAll;
+  y.onchange=()=>{scheduleState.year=+y.value;dfV1101RefreshSchedulesOnline(false)};
+  m.onchange=()=>{scheduleState.month=+m.value;dfV1101RefreshSchedulesOnline(false)};
+  document.getElementById('schedulePrev').onclick=()=>{let d=new Date(scheduleState.year,scheduleState.month-2,1);scheduleState.year=d.getFullYear();scheduleState.month=d.getMonth()+1;dfV1101RefreshSchedulesOnline(false)};
+  document.getElementById('scheduleNext').onclick=()=>{let d=new Date(scheduleState.year,scheduleState.month,1);scheduleState.year=d.getFullYear();scheduleState.month=d.getMonth()+1;dfV1101RefreshSchedulesOnline(false)};
+  document.getElementById('scheduleToday').onclick=()=>{const d=new Date();scheduleState.year=d.getFullYear();scheduleState.month=d.getMonth()+1;scheduleState.selectedDate=scheduleIso(d);dfV1101RefreshSchedulesOnline(false)};
+  document.getElementById('scheduleRefresh').onclick=()=>dfV1101RefreshSchedulesOnline(true);
   document.getElementById('scheduleGoAdd').onclick=scheduleGoAdd;
   document.getElementById('scheduleConfirm').onclick=()=>scheduleConfirmSelected(true);
   document.getElementById('scheduleUnconfirm').onclick=()=>scheduleConfirmSelected(false);
@@ -4118,26 +4169,48 @@ function scheduleAddPrepare(){
   dfV81PendingScheduleDate='';
   localStorage.removeItem('dreampoen_schedule_draft_date');
   scheduleAddFillCompanies();
+  if(dfV1101ScheduleEditId){
+    const s=scheduleItems().find(x=>String(x.Id)===String(dfV1101ScheduleEditId));
+    if(s){
+      $('#scheduleAddDate').value=s.Date||requested;
+      $('#scheduleAddType').value=s.Type||'측정출장';
+      $('#scheduleAddEmployee').value=s.Employee||'';
+      $('#scheduleAddStatus').value=s.Completed?'completed':(s.Confirmed?'confirmed':'planned');
+      $('#scheduleAddCompany').value=s.Company||'';
+      $('#scheduleAddCompanyId').value=(Array.isArray(s.CompanyIds)?s.CompanyIds[0]:'')||'';
+      $('#scheduleAddDetail').value=s.Detail||'';
+      $('#scheduleAddNote').value=s.Note||'';
+      const title=document.querySelector('#dfViewScheduleAdd .view-title, #dfViewScheduleAdd h2');if(title)title.dataset.v1101Original=title.dataset.v1101Original||title.textContent,title.textContent='일정 수정';
+      const save=$('#scheduleAddSave');if(save)save.textContent='수정 저장';
+    }
+  }else{
+    const title=document.querySelector('#dfViewScheduleAdd .view-title, #dfViewScheduleAdd h2');if(title&&title.dataset.v1101Original)title.textContent=title.dataset.v1101Original;
+    const save=$('#scheduleAddSave');if(save)save.textContent='일정 저장';
+  }
 }
 async function scheduleAddSave(){
   if(!companyState.db){alert('업체/일정 DB를 불러오는 중입니다.');return}
   const date=$('#scheduleAddDate').value;if(!date){alert('일정일을 입력해주세요.');return}
   const type=$('#scheduleAddType').value,status=$('#scheduleAddStatus').value,c=scheduleAddCompany(),companyName=$('#scheduleAddCompany').value.trim();
   if(type==='측정출장'&&!companyName){alert('측정출장은 업체를 선택하거나 입력해주세요.');return}
-  const s={Id:`schedule-web-${Date.now()}`,Date:date,Employee:$('#scheduleAddEmployee').value.trim(),Type:type,Company:companyName,Companies:companyName?[companyName]:[],CompanyIds:c?[c.Id]:[],
+  const editing=dfV1101ScheduleEditId?scheduleItems().find(x=>String(x.Id)===String(dfV1101ScheduleEditId)):null;
+  const nowIso=new Date().toISOString().slice(0,19),nowText=nowIso.replace('T',' ');
+  const s=editing||{Id:`schedule-web-${Date.now()}`,CreatedAt:nowIso,Deleted:false};
+  Object.assign(s,{Date:date,Employee:$('#scheduleAddEmployee').value.trim(),Type:type,Company:companyName,Companies:companyName?[companyName]:[],CompanyIds:c?[c.Id]:[],
     Facility:'',Facilities:[],FacilityIds:[],FacilityPlans:[],MeasurementItems:'',
     Detail:$('#scheduleAddDetail').value.trim()||companyName,Note:$('#scheduleAddNote').value.trim(),
-    Confirmed:status!=='planned',ConfirmedAt:status!=='planned'?new Date().toISOString().slice(0,19).replace('T',' '):'',Completed:status==='completed',CompletedAt:status==='completed'?new Date().toISOString().slice(0,19).replace('T',' '):'',
-    CreatedAt:new Date().toISOString().slice(0,19),UpdatedAt:new Date().toISOString().slice(0,19),UpdatedBy:'웹 일정등록',Deleted:false};
-  companyState.db.Schedules=companyState.db.Schedules||[];companyState.db.Schedules.push(s);
+    Confirmed:status!=='planned',ConfirmedAt:status!=='planned'?(s.ConfirmedAt||nowText):'',Completed:status==='completed',CompletedAt:status==='completed'?(s.CompletedAt||nowText):'',
+    UpdatedAt:nowIso,UpdatedBy:editing?'웹 일정수정':'웹 일정등록',Deleted:false});
+  companyState.db.Schedules=companyState.db.Schedules||[];if(!editing)companyState.db.Schedules.push(s);
   try{companySaveDb()}catch(e){console.warn('일정 로컬저장',e)}
   const ok=await dfV95SyncSchedule(s);
   scheduleState.selectedDate=date;scheduleState.selectedId=s.Id;const d=scheduleDateObj(date);scheduleState.year=d.getFullYear();scheduleState.month=d.getMonth()+1;
   scheduleRenderAll();companyRender();
   const stateEl=document.getElementById('companyOnlineState');if(stateEl&&!ok){stateEl.textContent='일정 온라인 저장 실패 · Supabase 권한 확인';stateEl.className='company-online-state warn'}
   if(ok){
-    alert(`일정 등록이 완료되었습니다.\n${date} · ${companyName||type}`);
-    scheduleAddClear(true);window.v62ShowOnly?.('schedule');
+    const wasEdit=!!dfV1101ScheduleEditId;dfV1101ScheduleEditId='';
+    alert(`${wasEdit?'일정 수정':'일정 등록'}이 완료되었습니다.\n${date} · ${companyName||type}`);
+    scheduleAddClear(true);await dfV1101RefreshSchedulesOnline(false);window.v62ShowOnly?.('schedule');
   }else{
     alert('일정은 현재 화면에 임시 반영되었지만 온라인 저장에 실패했습니다.\n입력 내용은 유지되므로 다시 저장하거나 연결 상태를 확인해주세요.');
   }
@@ -4154,7 +4227,7 @@ function initScheduleAdd(){
   const backBtn=$('#scheduleAddBack');
   if(clearBtn)clearBtn.onclick=()=>scheduleAddClear(true);
   if(saveBtn)saveBtn.onclick=scheduleAddSave;
-  if(backBtn)backBtn.onclick=()=>document.querySelector('.df-nav-item[data-view="schedule"]')?.click();
+  if(backBtn)backBtn.onclick=()=>{dfV1101ScheduleEditId='';document.querySelector('.df-nav-item[data-view="schedule"]')?.click()};
 }
 document.addEventListener('DOMContentLoaded',initScheduleAdd);
 
